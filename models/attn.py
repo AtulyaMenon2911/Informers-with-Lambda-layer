@@ -146,7 +146,6 @@ class AttentionLayer(nn.Module):
         self.out_projection = nn.Linear(d_values * n_heads, d_model)
         self.n_heads = n_heads
         self.mix = mix
-        print("Main Attention")
 
     def forward(self, queries, keys, values, attn_mask):
         B, L, _ = queries.shape
@@ -200,12 +199,11 @@ class LambdaModule(nn.Module):
             content_output = torch.einsum('b h n k, b k v -> b n h v',queries, content_lambda)
 
             position_output = torch.einsum('b h n, k, b n k v -> b n h v',queries, position_lambdas)
-            print((content_output + position_output).shape)
             output = np.reshape(content_output + position_output,(b,n,h*v))
         
         else:
             content_lambda = torch.einsum('b m k, b m v -> b k v',keys.softmax(dim=-1), values)
-            print("context lambda", content_lambda.shape)
+            #print("context lambda", content_lambda.shape)
             content_output =torch.einsum('b h n k, b k v -> b n h v',queries, content_lambda)
             output = content_output.view(b, n, -1)
             #print("Output",output.shape)
