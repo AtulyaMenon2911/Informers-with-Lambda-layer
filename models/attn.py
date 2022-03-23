@@ -151,7 +151,6 @@ class AttentionLayer(nn.Module):
     def forward(self, queries, keys, values, attn_mask):
         B, L, _ = queries.shape
         _, S, _ = keys.shape
-        print("Main Attention forwards pass")
         H = self.n_heads
 
         #queries = self.query_projection(queries)
@@ -188,10 +187,10 @@ class LambdaModule(nn.Module):
         self.dropout = nn.Dropout(attention_dropout)
         self.embed = embed
         
-        print("Using Lambda Module")
+        #print("Using Lambda Module")
 
     def forward(self, queries, keys, values, attn_mask):
-        print("LambdaFunction")
+        #print("LambdaFunction")
         b, n, h, k = queries.shape
         _, m, v= values.shape
         if (self.embed==True):
@@ -209,7 +208,7 @@ class LambdaModule(nn.Module):
             print("context lambda", content_lambda.shape)
             content_output =torch.einsum('b h n k, b k v -> b n h v',queries, content_lambda)
             output = content_output.view(b, n, -1)
-            print("Output",output.shape)
+            #print("Output",output.shape)
             output = content_output
 
         return output, None
