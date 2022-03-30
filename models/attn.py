@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import numpy as np
-
+from einops import rearrange
 from math import sqrt
 from utils.masking import TriangularCausalMask, ProbMask
 
@@ -136,6 +136,7 @@ class AttentionLayer(nn.Module):
         self.lam = lam
 
         self.inner_attention = attention
+        #print("d_keys",d_keys)
         self.query_projection = nn.Linear(d_model, d_keys * n_heads)
         if (self.lam == False):
             self.key_projection = nn.Linear(d_model, d_keys * n_heads)
@@ -181,32 +182,48 @@ class LambdaModule(nn.Module):
         #False,False, factor, attention_dropout=dropout, output_attention=output_attention
         super(LambdaModule, self).__init__()
         #self.scale = scale
+        self.embed = embed
         self.mask_flag = mask_flag
         self.output_attention = output_attention
         self.dropout = nn.Dropout(attention_dropout)
-        self.embed = embed
+        self.dim_u = 1
+        #self.dim_k = 
         
+        
+    def calc_rel_pos(n):
+        pos = torch.meshgrid(torch.arange(n), torch.arange(n))
+        pos = rearrange(torch.stack(pos), 'n i j -> (i j) n')  # [n*n, 2] pos[n] = (i, j)
+        rel_pos = pos[None, :] - pos[:, None]                  # [n*n, n*n, 2] rel_pos[n, m] = (rel_i, rel_j)
+        rel_pos += n - 1                                       # shift value range from [-n+1, n-1] to [0, 2n-2]
+        return rel_pos
         #print("Using Lambda Module")
 
     def forward(self, queries, keys, values, attn_mask):
-        #print("LambdaFunction")
+        print("LambdaFunction")
         b, n, h, k = queries.shape
         _, m, v= values.shape
-        if (self.embed==True):
-            n = self.embedding.shape[0]
-            content_lambda = torch.einsum('b m k, b m v -> b k v',keys.softmax(dim=-1), values)
-            position_lambdas = torch.einsum('n m k, b m v -> b n k v',self.embeddings, values)
-            content_output = torch.einsum('b h n k, b k v -> b n h v',queries, content_lambda)
+        print("query shape", queries.shape)
+        print("value shape", values.shape)
+        #if (self.embed==True):
+        rel_lengths = 2 * n - 1
+        print("rel_lengths = ",rel_lengths)
+        print("key shape", keys.shape)
+        print("dim_u",self.dim_u)
+        self.rel_pos_emb = nn.Parameter(torch.randn(rel_lengths, rel_lengths, keys.shape[-1], self.dim_u))
+        self.rel_pos = LambdaModule.calc_rel_pos(n)
+        n, m = self.rel_pos.unbind(dim = -1)
+        rel_pos_emb = self.rel_pos_emb[n, m]
+        content_lambda = torch.einsum('b m k, b m v -> b k v',keys.softmax(dim=-1), values)
+        position_lambdas = torch.einsum('n m k, b m v -> b n k v',rel_pos_emb, values)
+        content_output = torch.einsum('b h n k, b k v -> b n h v',queries, content_lambda)
 
-            position_output = torch.einsum('b h n, k, b n k v -> b n h v',queries, position_lambdas)
-            output = np.reshape(content_output + position_output,(b,n,h*v))
+        position_output = torch.einsum('b h n, k, b n k v -> b n h v',queries, position_lambdas)
+        output = (content_output + position_output).view(b,n,-1)
         
-        else:
-            content_lambda = torch.einsum('b m k, b m v -> b k v',keys.softmax(dim=-1), values)
-            #print("context lambda", content_lambda.shape)
-            content_output =torch.einsum('b h n k, b k v -> b n h v',queries, content_lambda)
-            output = content_output.view(b, n, -1)
-            #print("Output",output.shape)
-            output = content_output
+        #else:
+            #content_lambda = torch.einsum('b m k, b m v -> b k v',keys.softmax(dim=-1), values)
+            #content_output =torch.einsum('b h n k, b k v -> b n h v',queries, content_lambda)
+            #output = content_output.view(b, n, -1)
+            #output = content_output
 
         return output, None
