@@ -1,9 +1,9 @@
+from traceback import print_tb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 import numpy as np
-from einops import rearrange
 from math import sqrt
 from utils.masking import TriangularCausalMask, ProbMask
 
@@ -127,7 +127,7 @@ class ProbAttention(nn.Module):
 
 class AttentionLayer(nn.Module):
     def __init__(self, attention, d_model, n_heads,lam = True,
-                 d_keys=None, d_values=None, mix=False):
+                 d_keys=None, d_values=None, mix=False,seq_len=96):
         super(AttentionLayer, self).__init__()
 
         d_keys = d_keys or (d_model//n_heads)
@@ -144,6 +144,8 @@ class AttentionLayer(nn.Module):
         else:
             self.key_projection = nn.Linear(d_model, d_keys)
             self.value_projection = nn.Linear(d_model, d_values)
+            self.embedding = nn.Parameter(torch.randn([seq_len,seq_len,d_keys]), requires_grad=True)
+            
         self.out_projection = nn.Linear(d_values * n_heads, d_model)
         self.n_heads = n_heads
         self.mix = mix
@@ -153,8 +155,8 @@ class AttentionLayer(nn.Module):
         _, S, _ = keys.shape
         H = self.n_heads
 
-        #queries = self.query_projection(queries)
-        queries = queries.view(B, L, H, -1)
+        queries = self.query_projection(queries)
+        #queries = queries.view(B, L, H, -1)
         keys = self.key_projection(keys) #.view(B, S, H, -1)
         #print("keys outer attention:",keys.shape)
         values = self.value_projection(values) #.view(B, S, H, -1)
@@ -164,13 +166,17 @@ class AttentionLayer(nn.Module):
             queries = queries.view(B, L, H, -1)
             keys = keys.view(B, S, H, -1)
             values = values.view(B, S, H, -1)
+            out,attn = self.inner_attention(queries,keys,values,attn_mask)
 
-        out, attn = self.inner_attention(
-            queries,
-            keys,
-            values,
-            attn_mask
-        )
+        else:
+            queries = queries.view(B,H,L,-1)
+
+            out, attn = self.inner_attention(
+                queries,
+                keys,
+                values,
+                self.embedding
+            )
         if self.mix:
             out = out.transpose(2,1).contiguous()
         out = out.view(B, L, -1)
@@ -186,44 +192,17 @@ class LambdaModule(nn.Module):
         self.mask_flag = mask_flag
         self.output_attention = output_attention
         self.dropout = nn.Dropout(attention_dropout)
-        self.dim_u = 1
-        #self.dim_k = 
         
-        
-    def calc_rel_pos(n):
-        pos = torch.meshgrid(torch.arange(n), torch.arange(n))
-        pos = rearrange(torch.stack(pos), 'n i j -> (i j) n')  # [n*n, 2] pos[n] = (i, j)
-        rel_pos = pos[None, :] - pos[:, None]                  # [n*n, n*n, 2] rel_pos[n, m] = (rel_i, rel_j)
-        rel_pos += n - 1                                       # shift value range from [-n+1, n-1] to [0, 2n-2]
-        return rel_pos
-        #print("Using Lambda Module")
 
-    def forward(self, queries, keys, values, attn_mask):
-        print("LambdaFunction")
+    def forward(self, queries, keys, values,embedding):
         b, n, h, k = queries.shape
         _, m, v= values.shape
-        print("query shape", queries.shape)
-        print("value shape", values.shape)
-        #if (self.embed==True):
-        rel_lengths = 2 * n - 1
-        print("rel_lengths = ",rel_lengths)
-        print("key shape", keys.shape)
-        print("dim_u",self.dim_u)
-        self.rel_pos_emb = nn.Parameter(torch.randn(rel_lengths, rel_lengths, keys.shape[-1], self.dim_u))
-        self.rel_pos = LambdaModule.calc_rel_pos(n)
-        n, m = self.rel_pos.unbind(dim = -1)
-        rel_pos_emb = self.rel_pos_emb[n, m]
+
         content_lambda = torch.einsum('b m k, b m v -> b k v',keys.softmax(dim=-1), values)
-        position_lambdas = torch.einsum('n m k, b m v -> b n k v',rel_pos_emb, values)
+        position_lambdas = torch.einsum('n m k, b m v -> b n k v',embedding, values)
         content_output = torch.einsum('b h n k, b k v -> b n h v',queries, content_lambda)
 
-        position_output = torch.einsum('b h n, k, b n k v -> b n h v',queries, position_lambdas)
+        position_output = torch.einsum('b h n k, b n k v -> b n h v',queries, position_lambdas)
         output = (content_output + position_output).view(b,n,-1)
-        
-        #else:
-            #content_lambda = torch.einsum('b m k, b m v -> b k v',keys.softmax(dim=-1), values)
-            #content_output =torch.einsum('b h n k, b k v -> b n h v',queries, content_lambda)
-            #output = content_output.view(b, n, -1)
-            #output = content_output
 
         return output, None

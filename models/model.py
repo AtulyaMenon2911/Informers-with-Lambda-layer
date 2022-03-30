@@ -34,7 +34,7 @@ class Informer(nn.Module):
             [
                 EncoderLayer(
                     AttentionLayer(Attn(False,False, factor, attention_dropout=dropout, output_attention=output_attention), 
-                                d_model, n_heads, mix=False, lam = True),
+                                d_model, n_heads, mix=False, lam = True,seq_len=(seq_len//2**l)),
                     d_model,
                     d_ff,
                     dropout=dropout,
@@ -53,9 +53,9 @@ class Informer(nn.Module):
             [
                 DecoderLayer(
                     AttentionLayer(Attn(False,True, factor, attention_dropout=dropout, output_attention=False), 
-                                d_model, n_heads, mix=mix),
+                                d_model, n_heads, mix=mix,seq_len=seq_len - out_len),
                     AttentionLayer(FullAttention(False,False, factor, attention_dropout=dropout, output_attention=False), 
-                                d_model, n_heads, mix=False, lam = False),
+                                d_model, n_heads, mix=False, lam = False,seq_len=(seq_len - out_len)),
                     d_model,
                     d_ff,
                     dropout=dropout,
